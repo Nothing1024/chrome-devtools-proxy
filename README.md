@@ -1,4 +1,4 @@
-# Chrome DevTools Proxy MCP
+# Chrome DevTools Proxy
 
 This repository contains two separate components:
 
@@ -6,6 +6,14 @@ This repository contains two separate components:
 - `chrome-ai-tab-group/`: a Chrome extension that users load manually from this checkout.
 
 The npm package does not bundle, download, or load the Chrome extension. The extension remains a separate manual install.
+
+## Advantages
+
+- Enhances upstream `chrome-devtools-mcp` instead of replacing it: existing Chrome DevTools MCP tools are forwarded, with target routing added by the proxy.
+- Supports multiple Chrome targets in one MCP server, so agents can quickly switch between browser ports or profiles with a `target` argument instead of restarting MCP.
+- Keeps runtime behavior stable by using pinned package dependencies and the locally installed upstream binary, avoiding nested `npx` or `latest` drift.
+- Adds `mark_ai_tab_group` so long-running browser work can mark the active tab as `AI Processing` when the separately loaded extension is installed.
+- Keeps the npm package clean: only the proxy ships through npm; the Chrome extension is loaded manually from the GitHub checkout.
 
 ## Install the Chrome extension
 
@@ -84,6 +92,26 @@ A fixed local debugging port can be configured like this:
   "defaultTarget": "host"
 }
 ```
+
+Multiple ports can be configured as separate targets for fast switching:
+
+```json
+{
+  "targets": {
+    "app": {
+      "label": "App Chrome 9222",
+      "args": ["--browserUrl=http://127.0.0.1:9222"]
+    },
+    "admin": {
+      "label": "Admin Chrome 9223",
+      "args": ["--browserUrl=http://127.0.0.1:9223"]
+    }
+  },
+  "defaultTarget": "app"
+}
+```
+
+Tool calls can then pass `"target": "admin"` to route one request to port `9223` without changing the MCP server process.
 
 Start Chrome with a dedicated profile before using that config:
 
