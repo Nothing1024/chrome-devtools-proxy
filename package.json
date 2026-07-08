@@ -1,0 +1,26 @@
+{
+  "name": "chrome-devtools-proxy",
+  "version": "1.0.0",
+  "description": "GitHub-installable MCP proxy that routes Chrome DevTools tool calls to multiple browser targets",
+  "type": "module",
+  "main": "./chrome-devtools-proxy/index.js",
+  "bin": {
+    "chrome-devtools-proxy": "./chrome-devtools-proxy/index.js"
+  },
+  "files": [
+    "chrome-devtools-proxy/index.js",
+    "chrome-devtools-proxy/package.json",
+    "chrome-devtools-proxy/targets.json"
+  ],
+  "scripts": {
+    "check": "node --check chrome-devtools-proxy/index.js",
+    "pack:dry-run": "npm pack --dry-run"
+  },
+  "engines": {
+    "node": "^20.19.0 || ^22.12.0 || >=23"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "chrome-devtools-mcp": "1.5.0"
+  }
+}

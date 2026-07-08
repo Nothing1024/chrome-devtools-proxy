@@ -10,6 +10,7 @@ Browser operation protocol for `chrome-devtools-proxy`.
 ## Config
 
 - MCP server: `chrome-devtools-proxy`
+- Recommended GitHub `npx` spec: `github:Nothing1024/chrome-devtools-proxy#v1.0.0`
 - Proxy package: `chrome-devtools-proxy/`
 - Targets config: bundled `chrome-devtools-proxy/targets.json` or the user-provided `--config` path
 - Tab group extension: `chrome-ai-tab-group/`, loaded manually with Chrome **Load unpacked**

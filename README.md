@@ -13,7 +13,7 @@ The npm package does not bundle, download, or load the Chrome extension. The ext
 - Supports multiple Chrome targets in one MCP server, so agents can quickly switch between browser ports or profiles with a `target` argument instead of restarting MCP.
 - Keeps runtime behavior stable by using pinned package dependencies and the locally installed upstream binary, avoiding nested `npx` or `latest` drift.
 - Adds `mark_ai_tab_group` so long-running browser work can mark the active tab as `AI Processing` when the separately loaded extension is installed.
-- Keeps the npm package clean: only the proxy ships through npm; the Chrome extension is loaded manually from the GitHub checkout.
+- Keeps the install package clean: GitHub `npx` and npm package installs run only the proxy; the Chrome extension is loaded manually from the GitHub checkout.
 
 ## Install the Chrome extension
 
@@ -25,9 +25,9 @@ The npm package does not bundle, download, or load the Chrome extension. The ext
 
 The extension groups tabs marked by the MCP proxy into an `AI Processing` Chrome tab group.
 
-## Run the MCP proxy
+## Run the MCP proxy from GitHub
 
-After the package is published to npm, use a pinned version in your MCP client configuration:
+Use the GitHub repository directly with `npx`. A pinned tag is recommended for stable MCP behavior:
 
 ```json
 {
@@ -36,11 +36,17 @@ After the package is published to npm, use a pinned version in your MCP client c
       "command": "npx",
       "args": [
         "-y",
-        "chrome-devtools-proxy@1.0.0"
+        "github:Nothing1024/chrome-devtools-proxy#v1.0.0"
       ]
     }
   }
 }
+```
+
+For testing the current default branch instead of a pinned tag:
+
+```sh
+npx -y github:Nothing1024/chrome-devtools-proxy
 ```
 
 For a custom target config, pass `--config`:
@@ -52,7 +58,7 @@ For a custom target config, pass `--config`:
       "command": "npx",
       "args": [
         "-y",
-        "chrome-devtools-proxy@1.0.0",
+        "github:Nothing1024/chrome-devtools-proxy#v1.0.0",
         "--config",
         "/path/to/targets.json"
       ]
@@ -140,20 +146,28 @@ The tool requires the separate `chrome-ai-tab-group/` extension to be loaded in 
 
 ## Package boundary
 
-Before publishing the npm package, validate its contents from `chrome-devtools-proxy/`:
+The repository root has a small `package.json` only so GitHub `npx` can run this repository directly. Validate the GitHub install package from the repository root:
 
 ```sh
 npm run check
 npm pack --dry-run --json
 ```
 
-The tarball should contain only:
+The GitHub `npx` package must not contain `chrome-ai-tab-group/` or extension files. It should contain only:
 
-- `index.js`
-- `package.json`
-- `targets.json`
+- `README.md`
+- root `package.json`
+- `chrome-devtools-proxy/index.js`
+- `chrome-devtools-proxy/package.json`
+- `chrome-devtools-proxy/targets.json`
 
-It must not contain `chrome-ai-tab-group/` or any other extension files.
+If publishing to the npm registry later, publish from `chrome-devtools-proxy/` and validate that subpackage separately:
+
+```sh
+cd chrome-devtools-proxy
+npm run check
+npm pack --dry-run --json
+```
 
 ## Browser operation protocol
 
