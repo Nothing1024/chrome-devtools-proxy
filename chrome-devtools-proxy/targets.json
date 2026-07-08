@@ -1,0 +1,9 @@
+{
+  "targets": {
+    "host": {
+      "label": "本机 Chrome",
+      "args": ["--auto-connect"]
+    }
+  },
+  "defaultTarget": "host"
+}

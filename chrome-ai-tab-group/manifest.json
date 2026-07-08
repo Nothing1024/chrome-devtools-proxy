@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "AI Tab Group",
+  "version": "1.0.7",
+  "description": "Automatically group tabs being processed by AI agents into an 'AI Processing' tab group",
+  "permissions": ["tabs", "tabGroups"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
