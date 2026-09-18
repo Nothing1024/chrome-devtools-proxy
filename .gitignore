@@ -6,3 +6,4 @@ npm-debug.log*
 .env.*
 !.env.example
 chrome-devtools-proxy/*.tgz
+scratch/

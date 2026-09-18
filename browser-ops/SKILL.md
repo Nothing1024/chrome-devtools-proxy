@@ -10,7 +10,7 @@ Browser operation protocol for `chrome-devtools-proxy`.
 ## Config
 
 - MCP server: `chrome-devtools-proxy`
-- Recommended GitHub `npx` spec: `github:Nothing1024/chrome-devtools-proxy#v1.0.0`
+- Recommended GitHub `npx` spec: `github:Nothing1024/chrome-devtools-proxy#v1.1.0`
 - Proxy package: `chrome-devtools-proxy/`
 - Targets config: bundled `chrome-devtools-proxy/targets.json` or the user-provided `--config` path
 - Tab group extension: `chrome-ai-tab-group/`, loaded manually with Chrome **Load unpacked**
@@ -24,7 +24,9 @@ Every browser operation MUST follow this sequence when it is multi-step, long-ru
 
 ### 1. Confirm page state
 
-Call the MCP page-listing tool first and confirm which page is selected. Never assume the previously selected page is still active.
+Call `list_pages` first and confirm which page is selected. Never assume the previously selected page is still active.
+
+Upstream `chrome-devtools-mcp` 1.9.0 requires `pageId` on page-scoped tools (`click`, `fill`, `take_snapshot`, `evaluate_script`, and the rest of that set) unless every target is started with `--no-page-id-routing`. After `list_pages`, pass that page's numeric id on later page-scoped calls.
 
 ### 2. Route to the correct target
 
@@ -36,8 +38,7 @@ Decision rules:
 - If the user explicitly names a target, use that target.
 - For `localhost` / `127.0.0.1`, match the configured `browserUrl`, WebSocket endpoint, or port.
 - For remote browser instances, use the matching configured target if present.
-
-This is the proxy's main enhancement over upstream `chrome-devtools-mcp`: one MCP server can quickly jump between multiple Chrome ports or profiles by changing the `target` argument.
+- Do not treat `--auto-connect` and a fixed `--browserUrl=http://127.0.0.1:9222` as two views of the same Chrome. The proxy pins `--auto-connect` to the websocket in `DevToolsActivePort` and rejects a second target that lands on the same host:port.
 
 ### 3. Check conflict risk
 
@@ -73,12 +74,12 @@ When multiple targets are configured, include the target:
 Expected internal flow:
 
 ```text
-agent -> chrome-devtools-proxy MCP -> upstream evaluate_script -> window.postMessage -> content.js -> background.js -> chrome.tabs/chrome.tabGroups
+agent -> chrome-devtools-proxy MCP -> list_pages -> evaluate_script(pageId) -> window.postMessage -> content.js -> background.js -> chrome.tabs/chrome.tabGroups
 ```
 
 ### 5. Operate
 
-Perform the requested Chrome DevTools MCP operations against the selected page and target.
+Perform the requested Chrome DevTools MCP operations against the selected page and target. Page-scoped tools need `pageId` from the latest `list_pages` result.
 
 ### 6. Release page through MCP
 
@@ -126,5 +127,6 @@ Suggest closing the MCP server when browser work is complete or the user switche
 ## Error recovery
 
 - `Target not connected`: the configured Chrome instance is not running or the target config is wrong. Tell the user which target failed.
+- `shares the same Chrome debugging endpoint`: two targets resolved to one CDP host:port. Keep one target for that Chrome, or start a second Chrome with its own `--user-data-dir` and `--remote-debugging-port`.
 - `AI Tab Group extension did not respond`: load `chrome-ai-tab-group/` into the controlled Chrome profile and retry. The tool is unavailable on Chrome internal pages that cannot run content scripts.
-- `Page closed`: call the MCP page-listing tool again and choose a live page.
+- `Page closed`: call `list_pages` again and choose a live page.

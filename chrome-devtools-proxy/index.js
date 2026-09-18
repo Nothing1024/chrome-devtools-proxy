@@ -9,6 +9,19 @@ import { readFileSync } from "fs";
 import { resolve, dirname } from "path";
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
+import {
+  buildChromeDevToolsArgv,
+  connectionKey,
+  findConnectedIdentityCollision,
+  formatIdentity,
+  hasOwn,
+  isValidPort,
+  maybePinIdentity,
+  parseSelectedPageId,
+  resolveTargetIdentity,
+  validateTargetConnections,
+  validateToolCatalogArgs,
+} from "./proxy-lib.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -17,28 +30,6 @@ const VERSION = PACKAGE_JSON.version;
 const DEFAULT_CONFIG_PATH = resolve(__dirname, "targets.json");
 const CHROME_DEVTOOLS_MCP_BIN = resolvePackageBin("chrome-devtools-mcp", "chrome-devtools-mcp");
 const MARK_TAB_TOOL = "mark_ai_tab_group";
-const TOOL_CATALOG_FLAGS = new Map([
-  ["slim", { canonical: "slim", defaultValue: false }],
-  ["experimentalpageidrouting", { canonical: "experimentalPageIdRouting", defaultValue: false }],
-  ["experimentaldevtools", { canonical: "experimentalDevtools", defaultValue: false }],
-  ["experimentalvision", { canonical: "experimentalVision", defaultValue: false }],
-  ["memorydebugging", { canonical: "memoryDebugging", defaultValue: false }],
-  ["experimentalmemory", { canonical: "memoryDebugging", defaultValue: false }],
-  ["experimentalnavigationallowlist", { canonical: "experimentalNavigationAllowlist", defaultValue: false }],
-  ["experimentalinteroptools", { canonical: "experimentalInteropTools", defaultValue: false }],
-  ["experimentalscreencast", { canonical: "experimentalScreencast", defaultValue: false }],
-  ["experimentalffmpegpath", { canonical: "experimentalScreencast", defaultValue: false, implies: true }],
-  ["categoryexperimentalwebmcp", { canonical: "categoryExperimentalWebmcp", defaultValue: false }],
-  ["categoryexperimentalthirdparty", { canonical: "categoryExperimentalThirdParty", defaultValue: false }],
-  ["categoryextensions", { canonical: "categoryExtensions", defaultValue: false }],
-  ["categoryemulation", { canonical: "categoryEmulation", defaultValue: true }],
-  ["categoryperformance", { canonical: "categoryPerformance", defaultValue: true }],
-  ["categorynetwork", { canonical: "categoryNetwork", defaultValue: true }],
-  ["categoryinput", { canonical: "categoryInput", defaultValue: true }],
-  ["categorynavigation", { canonical: "categoryNavigation", defaultValue: true }],
-  ["categorydebugging", { canonical: "categoryDebugging", defaultValue: true }],
-  ["categorymemory", { canonical: "categoryMemory", defaultValue: true }],
-]);
 
 const cli = loadCli(process.argv.slice(2));
 
@@ -55,13 +46,13 @@ Options:
   process.exit(0);
 }
 
-
 const configPath = cli.configPath ?? DEFAULT_CONFIG_PATH;
 const config = loadConfig(configPath);
 
 const clients = new Map();
 const transports = new Map();
 const connecting = new Map();
+const identities = new Map();
 let mergedTools = [];
 let shuttingDown = false;
 
@@ -121,78 +112,6 @@ function parseCliArgs(argv) {
   return parsed;
 }
 
-function isValidPort(port) {
-  if (typeof port === "number") {
-    return Number.isInteger(port) && port > 0 && port <= 65535;
-  }
-  if (typeof port !== "string" || !/^[1-9]\d{0,4}$/.test(port)) {
-    return false;
-  }
-  const value = Number(port);
-  return value <= 65535;
-}
-
-function hasOwn(object, property) {
-  return Object.prototype.hasOwnProperty.call(object, property);
-}
-
-function normalizeFlagKey(name) {
-  return name.replace(/^-+/, "").replace(/^no-/, "").replace(/[-_]/g, "").toLowerCase();
-}
-
-function parseFlagValue(value) {
-  if (value === undefined) return true;
-  const normalized = value.toLowerCase();
-  if (normalized === "false" || normalized === "0" || normalized === "no") return false;
-  if (normalized === "true" || normalized === "1" || normalized === "yes") return true;
-  return value;
-}
-
-function isBooleanLiteral(value) {
-  const normalized = value.toLowerCase();
-  return normalized === "false" || normalized === "0" || normalized === "no" ||
-    normalized === "true" || normalized === "1" || normalized === "yes";
-}
-
-function getToolCatalogSignature(args) {
-  const signature = new Map();
-  for (const definition of TOOL_CATALOG_FLAGS.values()) {
-    if (!signature.has(definition.canonical)) {
-      signature.set(definition.canonical, definition.defaultValue);
-    }
-  }
-
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i];
-    if (!arg.startsWith("--")) continue;
-
-    const equalsIndex = arg.indexOf("=");
-    const rawName = equalsIndex === -1 ? arg : arg.slice(0, equalsIndex);
-    let rawValue = equalsIndex === -1 ? undefined : arg.slice(equalsIndex + 1);
-    if (rawValue === undefined && args[i + 1] && !args[i + 1].startsWith("-") && isBooleanLiteral(args[i + 1])) {
-      rawValue = args[i + 1];
-    }
-    const negated = rawName.startsWith("--no-");
-    const key = normalizeFlagKey(negated ? `--${rawName.slice("--no-".length)}` : rawName);
-    const definition = TOOL_CATALOG_FLAGS.get(key);
-    if (!definition) continue;
-
-    signature.set(definition.canonical, negated ? false : definition.implies ? true : parseFlagValue(rawValue));
-  }
-
-  return JSON.stringify([...signature.entries()].sort(([left], [right]) => left.localeCompare(right)));
-}
-
-function validateToolCatalogArgs(targets, targetNames, defaultTarget, sourcePath) {
-  const defaultSignature = getToolCatalogSignature(targets[defaultTarget].args || []);
-  for (const name of targetNames) {
-    const signature = getToolCatalogSignature(targets[name].args || []);
-    if (signature !== defaultSignature) {
-      throw new Error(`Invalid config in ${sourcePath}: target "${name}" changes chrome-devtools-mcp tool catalog flags; all targets must use the same tool-shaping flags as defaultTarget "${defaultTarget}"`);
-    }
-  }
-}
-
 function normalizeConfig(rawConfig, sourcePath) {
   if (!rawConfig || typeof rawConfig !== "object") {
     throw new Error(`Invalid config in ${sourcePath}: expected an object`);
@@ -241,36 +160,10 @@ function normalizeConfig(rawConfig, sourcePath) {
 
   validateToolCatalogArgs(targets, targetNames, defaultTarget, sourcePath);
 
+  validateTargetConnections(targets, sourcePath);
+
   return { ...rawConfig, defaultTarget };
 }
-
-function hasOptionValue(arg, ...names) {
-  return names.some((name) => arg === name || arg.startsWith(`${name}=`));
-}
-
-function isEnabledAutoConnectArg(args, index) {
-  const arg = args[index];
-  const equalsIndex = arg.indexOf("=");
-  const rawName = equalsIndex === -1 ? arg : arg.slice(0, equalsIndex);
-  let rawValue = equalsIndex === -1 ? undefined : arg.slice(equalsIndex + 1);
-  const negated = rawName.startsWith("--no-");
-  const key = normalizeFlagKey(negated ? `--${rawName.slice("--no-".length)}` : rawName);
-  if (key !== "autoconnect") return false;
-  if (negated) return false;
-  if (rawValue === undefined && args[index + 1] && !args[index + 1].startsWith("-") && isBooleanLiteral(args[index + 1])) {
-    rawValue = args[index + 1];
-  }
-  return parseFlagValue(rawValue) !== false;
-}
-
-function hasConnectionArg(args) {
-  return args.some((arg, index) => (
-    isEnabledAutoConnectArg(args, index) ||
-    hasOptionValue(arg, "--browserUrl", "--browser-url", "-u") ||
-    hasOptionValue(arg, "--wsEndpoint", "--ws-endpoint", "-w")
-  ));
-}
-
 
 function createTargetProperty() {
   const targetNames = Object.keys(config.targets);
@@ -303,20 +196,41 @@ function createLocalTools() {
   ];
 }
 
-function buildChromeDevToolsArgs(target) {
-  const targetArgs = target.args || [];
-  const args = [CHROME_DEVTOOLS_MCP_BIN, "--no-usage-statistics", ...targetArgs];
-
-  if (target.port && !hasConnectionArg(targetArgs)) {
-    args.push("--browserUrl=http://127.0.0.1:" + Number(target.port));
-  }
-
-  return args;
+function buildChromeDevToolsArgs(target, identity) {
+  return buildChromeDevToolsArgv(CHROME_DEVTOOLS_MCP_BIN, target, identity);
 }
 
-function unregisterTarget(name) {
-  clients.delete(name);
-  transports.delete(name);
+function refreshPendingIdentities() {
+  for (const [name, identity] of identities) {
+    if (identity.kind !== "pending-autoConnect") continue;
+    identities.set(name, maybePinIdentity(identity, config.targets[name]));
+  }
+}
+
+function assertNoIdentityCollision(name, identity) {
+  const collision = findConnectedIdentityCollision(identities, name, identity);
+  if (collision) {
+    throw new Error(`Target "${name}" (${formatIdentity(identity)}) shares the same Chrome debugging endpoint as already connected target "${collision}". Use one target for that browser, or give each Chrome instance its own remote-debugging port and user-data-dir.`);
+  }
+}
+
+function assertPinnedIdentitiesAreDistinct() {
+  refreshPendingIdentities();
+  for (const [name, identity] of identities) {
+    if (identity.kind !== "cdp") continue;
+    assertNoIdentityCollision(name, identity);
+  }
+}
+
+function pinIdentityAfterUse(name) {
+  const identity = identities.get(name);
+  const target = hasOwn(config.targets, name) ? config.targets[name] : null;
+  if (!identity || !target || identity.kind !== "pending-autoConnect") return;
+  const pinned = maybePinIdentity(identity, target);
+  if (connectionKey(pinned) === connectionKey(identity) && pinned.kind === identity.kind) return;
+  assertNoIdentityCollision(name, pinned);
+  identities.set(name, pinned);
+  process.stderr.write(`[proxy] Pinned target "${name}" to ${formatIdentity(pinned)}\n`);
 }
 
 async function connectTarget(name) {
@@ -326,10 +240,15 @@ async function connectTarget(name) {
   const target = hasOwn(config.targets, name) ? config.targets[name] : null;
   if (!target) return null;
 
+  refreshPendingIdentities();
+  let identity = resolveTargetIdentity(target);
+  assertNoIdentityCollision(name, identity);
+  identities.set(name, identity);
+
   const promise = (async () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: buildChromeDevToolsArgs(target),
+      args: buildChromeDevToolsArgs(target, identity),
       env: {
         ...getDefaultEnvironment(),
         CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS: "1",
@@ -340,8 +259,14 @@ async function connectTarget(name) {
       const client = new Client({ name: `proxy-to-${name}`, version: VERSION });
       client.onclose = () => unregisterTarget(name);
       await client.connect(transport);
+      const pinned = maybePinIdentity(identity, target);
+      if (connectionKey(pinned) !== connectionKey(identity) || pinned.kind !== identity.kind) {
+        assertNoIdentityCollision(name, pinned);
+        identities.set(name, pinned);
+        identity = pinned;
+      }
       clients.set(name, client);
-      process.stderr.write(`[proxy] Connected to target "${name}"\n`);
+      process.stderr.write(`[proxy] Connected to target "${name}" via ${formatIdentity(identity)}\n`);
       return client;
     } catch (e) {
       unregisterTarget(name);
@@ -364,6 +289,7 @@ async function closeTransports() {
   await Promise.allSettled([...transports.values()].map(closeTransport));
   transports.clear();
   clients.clear();
+  identities.clear();
 }
 
 function cleanup() {
@@ -454,6 +380,11 @@ function getTargetName(args) {
   return targetName;
 }
 
+function evaluateScriptAcceptsPageId() {
+  const tool = mergedTools.find((item) => item.name === "evaluate_script");
+  return Boolean(tool?.inputSchema?.properties?.pageId);
+}
+
 async function callLocalTool(name, args) {
   if (name !== MARK_TAB_TOOL) return null;
 
@@ -473,9 +404,31 @@ async function callLocalTool(name, args) {
     };
   }
 
+  const listResult = await client.callTool({
+    name: "list_pages",
+    arguments: {},
+  });
+  if (listResult?.isError) return listResult;
+
+  const evaluateArguments = { function: createTabGroupScript(args.action) };
+  const evaluateSchema = mergedTools.find((item) => item.name === "evaluate_script")?.inputSchema?.properties || {};
+  if (evaluateSchema.waitForStableDom) {
+    evaluateArguments.waitForStableDom = false;
+  }
+  if (evaluateScriptAcceptsPageId()) {
+    const pageId = parseSelectedPageId(listResult);
+    if (pageId === null) {
+      return {
+        content: [{ type: "text", text: "No selected page. Call list_pages and select_page before mark_ai_tab_group." }],
+        isError: true,
+      };
+    }
+    evaluateArguments.pageId = pageId;
+  }
+
   return await client.callTool({
     name: "evaluate_script",
-    arguments: { function: createTabGroupScript(args.action) },
+    arguments: evaluateArguments,
   });
 }
 
@@ -504,8 +457,17 @@ async function init() {
     }
 
     try {
+      assertPinnedIdentitiesAreDistinct();
+    } catch (e) {
+      return { content: [{ type: "text", text: e.message }], isError: true };
+    }
+
+    try {
       const localResult = await callLocalTool(name, args);
-      if (localResult) return localResult;
+      if (localResult) {
+        pinIdentityAfterUse(getTargetName(args));
+        return localResult;
+      }
     } catch (e) {
       return { content: [{ type: "text", text: `Error calling local tool "${name}": ${e.message}` }], isError: true };
     }
@@ -532,7 +494,9 @@ async function init() {
     delete forwardArgs.target;
 
     try {
-      return await client.callTool({ name, arguments: forwardArgs });
+      const result = await client.callTool({ name, arguments: forwardArgs });
+      pinIdentityAfterUse(targetName);
+      return result;
     } catch (e) {
       return { content: [{ type: "text", text: `Error calling ${name} on target "${targetName}": ${e.message}` }], isError: true };
     }

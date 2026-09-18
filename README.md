@@ -9,8 +9,9 @@ The npm package does not bundle, download, or load the Chrome extension. The ext
 
 ## Advantages
 
-- Enhances upstream `chrome-devtools-mcp` instead of replacing it: existing Chrome DevTools MCP tools are forwarded, with target routing added by the proxy.
+- Enhances upstream `chrome-devtools-mcp` 1.9.0 instead of replacing it: existing Chrome DevTools MCP tools are forwarded, with target routing added by the proxy.
 - Supports multiple Chrome targets in one MCP server, so agents can quickly switch between browser ports or profiles with a `target` argument instead of restarting MCP.
+- Pins each target to one Chrome debugging endpoint at connect time. `--auto-connect` is resolved from that profile's `DevToolsActivePort` into a concrete WebSocket URL, so a later ephemeral CDP port cannot be reused by another target.
 - Keeps runtime behavior stable by using pinned package dependencies and the locally installed upstream binary, avoiding nested `npx` or `latest` drift.
 - Adds `mark_ai_tab_group` so long-running browser work can mark the active tab as `AI Processing` when the separately loaded extension is installed.
 - Keeps the install package clean: GitHub `npx` and npm package installs run only the proxy; the Chrome extension is loaded manually from the GitHub checkout.
@@ -36,7 +37,7 @@ Use the GitHub repository directly with `npx`. A pinned tag is recommended for s
       "command": "npx",
       "args": [
         "-y",
-        "github:Nothing1024/chrome-devtools-proxy#v1.0.0"
+        "github:Nothing1024/chrome-devtools-proxy#v1.1.0"
       ]
     }
   }
@@ -58,7 +59,7 @@ For a custom target config, pass `--config`:
       "command": "npx",
       "args": [
         "-y",
-        "github:Nothing1024/chrome-devtools-proxy#v1.0.0",
+        "github:Nothing1024/chrome-devtools-proxy#v1.1.0",
         "--config",
         "/path/to/targets.json"
       ]
@@ -119,13 +120,9 @@ Multiple ports can be configured as separate targets for fast switching:
 
 Tool calls can then pass `"target": "admin"` to route one request to port `9223` without changing the MCP server process.
 
-Start Chrome with a dedicated profile before using that config:
+Do not put `--auto-connect` and `--browserUrl` on the same Chrome instance as two targets. `--auto-connect` reads `DevToolsActivePort` from the Chrome user-data directory; that file often contains `9222` or another ephemeral port. If another target also uses that port, the proxy refuses the second connection instead of driving two logical targets through one CDP endpoint.
 
-```sh
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
-  --remote-debugging-port=9222 \
-  --user-data-dir="$HOME/.chrome-ai-mcp"
-```
+Each Chrome instance needs its own `--user-data-dir` and `--remote-debugging-port`.
 
 ## Local tab-group tool
 
@@ -142,7 +139,7 @@ Arguments:
 
 `action` is either `add` or `remove`. The `target` field is optional when using `defaultTarget`.
 
-The tool requires the separate `chrome-ai-tab-group/` extension to be loaded in the Chrome profile being controlled.
+Upstream 1.9.0 requires `pageId` on page-scoped tools by default. `mark_ai_tab_group` calls `list_pages` first and forwards the selected page's id to `evaluate_script`.
 
 ## Package boundary
 
@@ -150,6 +147,7 @@ The repository root has a small `package.json` only so GitHub `npx` can run this
 
 ```sh
 npm run check
+npm test
 npm pack --dry-run --json
 ```
 
@@ -158,6 +156,7 @@ The GitHub `npx` package must not contain `chrome-ai-tab-group/` or extension fi
 - `README.md`
 - root `package.json`
 - `chrome-devtools-proxy/index.js`
+- `chrome-devtools-proxy/proxy-lib.js`
 - `chrome-devtools-proxy/package.json`
 - `chrome-devtools-proxy/targets.json`
 
